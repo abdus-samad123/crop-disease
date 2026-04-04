@@ -1,0 +1,6 @@
+temperature,humidity,rainfall,disease
+25,80,10,1
+30,60,0,0
+28,85,20,1
+35,40,0,0
+22,90,15,1
