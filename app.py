@@ -1,59 +1,157 @@
 import streamlit as st
-from model import load_model, predict_risk
-from utils import get_weather
-from image_model import predict_image
+import pandas as pd
+import numpy as np
+import pickle
+import os
+from sklearn.ensemble import RandomForestClassifier
 from PIL import Image
+import folium
+from streamlit_folium import st_folium
+import time
 
-# Load model
+from utils import get_weather, get_coordinates
+
+# -------------------------------
+# PAGE CONFIG
+# -------------------------------
+st.set_page_config(page_title="PragyanAI Pro", layout="wide")
+
+st.title("🌾 PragyanAI Crop Intelligence System")
+
+# -------------------------------
+# MODEL
+# -------------------------------
+MODEL_FILE = "model.pkl"
+
+def train_model():
+    data = pd.read_csv("data.csv")
+    X = data[["temperature", "humidity", "rainfall"]]
+    y = data["disease"]
+
+    model = RandomForestClassifier()
+    model.fit(X, y)
+
+    with open(MODEL_FILE, "wb") as f:
+        pickle.dump(model, f)
+
+    return model
+
+def load_model():
+    if not os.path.exists(MODEL_FILE):
+        return train_model()
+    return pickle.load(open(MODEL_FILE, "rb"))
+
 model = load_model()
 
-st.set_page_config(page_title="Crop Disease Predictor", layout="centered")
+# -------------------------------
+# SIDEBAR
+# -------------------------------
+st.sidebar.title("⚙️ Control Panel")
 
-st.title("🌾 Crop Disease Prediction System")
+city = st.sidebar.text_input("📍 Location", "Delhi")
+crop = st.sidebar.selectbox("🌾 Crop", ["Rice", "Wheat", "Corn"])
+stage = st.sidebar.selectbox("🌱 Growth Stage", ["Seedling", "Vegetative", "Flowering", "Harvest"])
 
-# Sidebar
-st.sidebar.header("Input Parameters")
+if st.sidebar.button("🚀 Analyze"):
 
-city = st.sidebar.text_input("Enter Location", "Delhi")
-crop = st.sidebar.selectbox("Select Crop", ["Rice", "Wheat", "Corn"])
+    with st.spinner("Fetching data..."):
 
-# Get weather
-if st.sidebar.button("Get Weather & Predict"):
-    try:
-        temp, humidity, rainfall = get_weather(city)
+        temp, humidity, rainfall, source = get_weather(city)
 
-        st.subheader("🌦️ Weather Data")
-        st.write(f"Temperature: {temp}°C")
-        st.write(f"Humidity: {humidity}%")
-        st.write(f"Rainfall: {rainfall} mm")
+        # -------------------------------
+        # METRICS
+        # -------------------------------
+        col1, col2, col3 = st.columns(3)
+        col1.metric("🌡 Temp", f"{temp}°C")
+        col2.metric("💧 Humidity", f"{humidity}%")
+        col3.metric("🌧 Rainfall", f"{rainfall} mm")
 
-        risk = predict_risk(model, temp, humidity, rainfall)
+        st.caption(f"Source: {source}")
 
-        st.subheader("⚠️ Disease Risk Prediction")
+        # -------------------------------
+        # PREDICTION
+        # -------------------------------
+        prob = model.predict_proba([[temp, humidity, rainfall]])[0][1]
 
-        if risk < 0.3:
-            st.success(f"Low Risk ({round(risk,2)})")
-        elif risk < 0.7:
-            st.warning(f"Medium Risk ({round(risk,2)})")
+        st.subheader("⚠️ Risk Score")
+        st.progress(int(prob * 100))
+
+        if prob < 0.3:
+            st.success("🟢 Low Risk")
+        elif prob < 0.7:
+            st.warning("🟡 Medium Risk")
         else:
-            st.error(f"High Risk ({round(risk,2)})")
+            st.error("🔴 High Risk")
+            st.write("💊 Spray recommended within 2–3 days")
 
-            st.subheader("💊 Recommendation")
-            st.write("Apply preventive fungicide within 2–3 days")
+        # -------------------------------
+        # ALERT SYSTEM
+        # -------------------------------
+        st.subheader("🚨 Smart Alert")
 
-    except:
-        st.error("Invalid location or API issue")
+        if prob > 0.7:
+            st.error("High risk detected!")
+        elif prob > 0.4:
+            st.warning("Monitor crop daily")
+        else:
+            st.success("Crop safe")
 
-# Image upload
-st.subheader("📸 Upload Leaf Image")
+        # -------------------------------
+        # MAP
+        # -------------------------------
+        st.subheader("🌍 Risk Map")
 
-uploaded_file = st.file_uploader("Upload Image", type=["jpg", "png"])
+        lat, lon = get_coordinates(city)
 
-if uploaded_file:
-    image = Image.open(uploaded_file)
-    st.image(image, caption="Uploaded Image", use_column_width=True)
+        m = folium.Map(location=[lat, lon], zoom_start=6)
 
-    result = predict_image(image)
+        color = "green" if prob < 0.3 else "orange" if prob < 0.7 else "red"
 
-    st.subheader("🧪 Image Analysis Result")
-    st.write(result)
+        folium.Marker(
+            [lat, lon],
+            popup=f"Risk: {round(prob,2)}",
+            icon=folium.Icon(color=color)
+        ).add_to(m)
+
+        st_folium(m, width=700)
+
+# -------------------------------
+# IMAGE ANALYSIS
+# -------------------------------
+st.subheader("📸 Leaf Image Detection")
+
+file = st.file_uploader("Upload Image")
+
+if file:
+    img = Image.open(file)
+    st.image(img, width=300)
+
+    avg = np.array(img).mean()
+
+    if avg < 100:
+        st.error("Disease Detected")
+    else:
+        st.success("Healthy")
+
+# -------------------------------
+# DASHBOARD
+# -------------------------------
+st.subheader("📊 Analytics")
+
+data = pd.read_csv("data.csv")
+
+st.line_chart(data[["temperature", "humidity", "rainfall"]])
+st.bar_chart(data["disease"].value_counts())
+
+# -------------------------------
+# REFRESH BUTTON
+# -------------------------------
+if st.button("🔄 Refresh"):
+    time.sleep(1)
+    st.rerun()
+
+# -------------------------------
+# FOOTER
+# -------------------------------
+st.markdown("---")
+st.write("🚀 AI-powered crop advisory system")
